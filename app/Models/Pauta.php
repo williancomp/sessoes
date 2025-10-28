@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Pauta extends Model
 {
@@ -23,5 +24,10 @@ class Pauta extends Model
     public function tipoPauta(): BelongsTo 
     {
         return $this->belongsTo(TipoPauta::class);
+    }
+
+    public function votos(): HasMany 
+    {
+        return $this->hasMany(Voto::class);
     }
 }

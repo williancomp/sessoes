@@ -13,6 +13,3 @@ window.Echo = new Echo({
     enabledTransports: ['ws', 'wss'],
 });
 
-
-console.log('Echo initialized for Reverb'); // Adiciona um log para confirmar
-

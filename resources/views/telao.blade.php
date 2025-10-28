@@ -114,71 +114,116 @@
         <p>Acompanhe também pelo Facebook e Youtube!</p>
     </div>
 
-    <script type="module">
-        // Inicialização do Echo e listeners virão aqui no passo 5
-        console.log('Telão View Loaded');
+    <script>
+        // Aguarde o Echo estar disponível
+        document.addEventListener('DOMContentLoaded', function() {
+            if (!window.Echo) {
+                console.error('Echo não está disponível! Verifique se app.js foi carregado.');
+                return;
+            }
+            
+            console.log('Echo initialized for Reverb');
 
-        // Exemplo: Mostrar layout inicial por padrão
-        document.getElementById('layout-inicial').style.display = 'flex';
+            // Função auxiliar para mostrar apenas um layout e esconder os outros
+            function showLayout(layoutId) {
+                const layouts = ['layout-inicial', 'layout-camera', 'layout-pauta', 'layout-votacao', 'layout-palavra'];
+                layouts.forEach(id => {
+                    const element = document.getElementById(id);
+                    if (element) {
+                        element.style.display = (id === layoutId) ? 'flex' : 'none';
+                    }
+                });
+                console.log(`Showing layout: ${layoutId}`);
+            }
 
-        // Função auxiliar para mostrar apenas um layout e esconder os outros
-        function showLayout(layoutId) {
-            const layouts = ['layout-inicial', 'layout-camera', 'layout-pauta', 'layout-votacao', 'layout-palavra'];
-            layouts.forEach(id => {
-                const element = document.getElementById(id);
-                if (element) {
-                    element.style.display = (id === layoutId) ? 'flex' : 'none'; // Use 'flex' para centralizar
-                }
-            });
-            console.log(`Showing layout: ${layoutId}`);
-        }
+            // Conecta ao canal público da sessão plenária
+            window.Echo.channel('sessao-plenaria')
+                .listen('PresencaAtualizada', (e) => {
+                    console.log('PresencaAtualizada Event Received:', e);
+                    document.getElementById('presenca-presentes').textContent = e.contagemPresentes ?? '--';
+                    document.getElementById('presenca-ausentes').textContent = e.contagemAusentes ?? '--';
+                })
+                .listen('LayoutTelaoAlterado', (e) => {
+                    console.log('LayoutTelaoAlterado Event Received:', e);
+                    showLayout(e.layout);
 
-        // Conecta ao canal público da sessão plenária
-        window.Echo.channel('sessao-plenaria')
-            .listen('PresencaAtualizada', (e) => {
-                console.log('PresencaAtualizada Event Received:', e);
-                document.getElementById('presenca-presentes').textContent = e.contagemPresentes ?? '--';
-                document.getElementById('presenca-ausentes').textContent = e.contagemAusentes ?? '--';
-            })
-            .listen('LayoutTelaoAlterado', (e) => {
-                console.log('LayoutTelaoAlterado Event Received:', e);
-                // Aqui adicionaremos a lógica para atualizar os dados de cada layout
-                // Por enquanto, apenas muda o layout visível
-                showLayout(e.layout); // Mostra o layout solicitado pelo evento
-
-                // Lógica específica para ativar/desativar câmera
-                const videoElement = document.getElementById('camera-feed');
-                if (e.layout === 'layout-camera') {
-                    // Tenta acessar a câmera
-                    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-                        navigator.mediaDevices.getUserMedia({ video: true })
-                            .then(function(stream) {
-                                videoElement.srcObject = stream;
-                                videoElement.play();
-                            })
-                            .catch(function(err) {
-                                console.error("Erro ao acessar a câmera: ", err);
-                                // Poderia mostrar uma mensagem de erro no layout da câmera
-                            });
+                    // Lógica específica para ativar/desativar câmera
+                    const videoElement = document.getElementById('camera-feed');
+                    if (e.layout === 'layout-camera') {
+                        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                            navigator.mediaDevices.getUserMedia({ video: true })
+                                .then(function(stream) {
+                                    videoElement.srcObject = stream;
+                                    videoElement.play();
+                                })
+                                .catch(function(err) {
+                                    console.error("Erro ao acessar a câmera: ", err);
+                                });
+                        } else {
+                            console.error("getUserMedia não suportado neste navegador.");
+                        }
                     } else {
-                        console.error("getUserMedia não suportado neste navegador.");
+                        if (videoElement.srcObject) {
+                            videoElement.srcObject.getTracks().forEach(track => track.stop());
+                            videoElement.srcObject = null;
+                        }
                     }
-                } else {
-                    // Para qualquer outro layout, para a câmera para liberar o recurso
-                    if (videoElement.srcObject) {
-                        videoElement.srcObject.getTracks().forEach(track => track.stop());
-                        videoElement.srcObject = null;
+                })
+                .listen('VotacaoAberta', (e) => {
+                    console.log('VotacaoAberta Event Received:', e);
+                    // Mostra o layout de votação
+                    showLayout('layout-votacao');
+
+                    // Atualiza a pauta exibida
+                    const numero = e.pauta?.numero ?? '—';
+                    document.getElementById('votacao-pauta-numero').textContent = `Pauta: ${numero}`;
+
+                    // Zera placar
+                    document.getElementById('votacao-sim').textContent = '0';
+                    document.getElementById('votacao-nao').textContent = '0';
+                    document.getElementById('votacao-abst').textContent = '0';
+
+                    // Limpa lista nominal
+                    const lista = document.getElementById('votacao-lista-nominal');
+                    if (lista) lista.innerHTML = '';
+                })
+                .listen('VotoRegistrado', (e) => {
+                    console.log('VotoRegistrado Event Received:', e);
+                    const lista = document.getElementById('votacao-lista-nominal');
+                    if (!lista) return;
+
+                    const id = e.vereadorId ?? e.vereador_id;
+                    const nome = e.nomeVereador ?? `Vereador ${id}`;
+                    const voto = (e.voto ?? '').toLowerCase();
+
+                    let item = document.getElementById(`vereador-${id}`);
+                    if (!item) {
+                        item = document.createElement('div');
+                        item.id = `vereador-${id}`;
+                        item.style.padding = '4px 8px';
+                        item.style.borderBottom = '1px dashed rgba(255,255,255,0.2)';
+                        lista.appendChild(item);
                     }
-                }
-            })
-            // Adicione mais listeners .listen(...) aqui para VotacaoAberta, VotoRegistrado, etc.
-            .error((error) => {
-                console.error('WebSocket Error:', error);
-            });
+                    const cor = voto === 'sim' ? '#22c55e' : (voto === 'nao' ? '#ef4444' : '#f59e0b');
+                    item.innerHTML = `<strong style="color:${cor}">${nome}</strong> — ${voto.toUpperCase()}`;
+                })
+                .listen('ContagemVotosAtualizada', (e) => {
+                    console.log('ContagemVotosAtualizada Event Received:', e);
+                    if (typeof e.sim !== 'undefined') document.getElementById('votacao-sim').textContent = e.sim;
+                    if (typeof e.nao !== 'undefined') document.getElementById('votacao-nao').textContent = e.nao;
+                    if (typeof e.abst !== 'undefined') document.getElementById('votacao-abst').textContent = e.abst;
+                })
+                .listen('VotacaoEncerrada', (e) => {
+                    console.log('VotacaoEncerrada Event Received:', e);
+                    // Retorna ao layout inicial ou outro conforme sua orquestração
+                    showLayout('layout-inicial');
+                })
+                .error((error) => {
+                    console.error('WebSocket Error:', error);
+                });
 
-        console.log("Listening on channel 'sessao-plenaria'...");
-
-        // --- FIM DO CÓDIGO ECHO ---
+            console.log("Listening on channel 'sessao-plenaria'...");
+        });
     </script>
 </body>
 </html>

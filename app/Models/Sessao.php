@@ -28,4 +28,10 @@ class Sessao extends Model
     {
         return $this->belongsTo(Legislatura::class);
     }
+
+    public function presencas(): HasMany // <--- ADICIONE ESTE MÉTODO
+    {
+        // Assumes 'sessao_id' foreign key on the Presenca model
+        return $this->hasMany(Presenca::class);
+    }
 }
