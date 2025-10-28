@@ -124,8 +124,11 @@
             
             console.log('Echo initialized for Reverb');
 
+            const layoutInicial = @json($layoutInicial);
+            const dadosPautaInicial = @json($dadosPautaInicial);
+
             // Função auxiliar para mostrar apenas um layout e esconder os outros
-            function showLayout(layoutId) {
+            function showLayout(layoutId, data = null) {
                 const layouts = ['layout-inicial', 'layout-camera', 'layout-pauta', 'layout-votacao', 'layout-palavra'];
                 layouts.forEach(id => {
                     const element = document.getElementById(id);
@@ -133,8 +136,55 @@
                         element.style.display = (id === layoutId) ? 'flex' : 'none';
                     }
                 });
-                console.log(`Showing layout: ${layoutId}`);
+                console.log(`Showing layout: ${layoutId}`, data);
+
+                // Atualizar dados da pauta se o layout for pauta ou votação
+                if (layoutId === 'layout-pauta') {
+                    document.getElementById('pauta-numero').textContent = `Número: ${data?.numero ?? '...'}`;
+                    document.getElementById('pauta-descricao').innerHTML = `Descrição: ${data?.descricao ?? '...'}`; // Usar innerHTML para RichEditor
+                    document.getElementById('pauta-autor').textContent = `Autor: ${data?.autor ?? '...'}`;
+                } else if (layoutId === 'layout-votacao') {
+                    // Atualiza info da pauta na tela de votação
+                    document.getElementById('votacao-pauta-numero').textContent = `Pauta: ${data?.numero ?? '...'}`;
+                    // NÃO zera o placar aqui, espera evento ContagemVotosAtualizada ou VotacaoAberta
+                }
+
+                // Lógica específica para ativar/desativar câmera (igual a antes)
+                const videoElement = document.getElementById('camera-feed');
+                // ... (código da câmera) ...
             }
+
+            // Aguarde o Echo estar disponível
+            document.addEventListener('DOMContentLoaded', function() {
+                // *** INICIALIZAÇÃO ***
+                showLayout(layoutInicial, dadosPautaInicial); // Define o layout inicial com dados, se houver
+
+                if (!window.Echo) { /* ... (verificação do Echo) ... */ return; }
+                console.log('Echo initialized for Reverb');
+
+                window.Echo.channel('sessao-plenaria')
+                    // ... (listener PresencaAtualizada) ...
+                    .listen('LayoutTelaoAlterado', (e) => {
+                        console.log('LayoutTelaoAlterado Event Received:', e);
+                        showLayout(e.layout, e.dados); // Passa os dados recebidos
+                    })
+                    .listen('VotacaoAberta', (e) => {
+                        console.log('VotacaoAberta Event Received:', e);
+                        const pautaData = e.pauta;
+                        showLayout('layout-votacao', pautaData); // Mostra layout e atualiza dados da pauta
+
+                        // Zera placar e lista nominal ao ABRIR
+                        document.getElementById('votacao-sim').textContent = '0';
+                        document.getElementById('votacao-nao').textContent = '0';
+                        document.getElementById('votacao-abst').textContent = '0';
+                        const lista = document.getElementById('votacao-lista-nominal');
+                        if (lista) lista.innerHTML = '';
+                    })
+                    // ... (listeners VotoRegistrado, ContagemVotosAtualizada, VotacaoEncerrada - sem alterações significativas) ...
+                    .error((error) => { /* ... */ });
+
+                console.log("Listening on channel 'sessao-plenaria'...");
+            });
 
             // Conecta ao canal público da sessão plenária
             window.Echo.channel('sessao-plenaria')
