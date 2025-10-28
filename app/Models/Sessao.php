@@ -13,6 +13,14 @@ class Sessao extends Model
     protected $guarded = [];
 
     /**
+     * Define os casts dos atributos.
+     * Adicione esta propriedade:
+     */
+    protected $casts = [
+        'data' => 'date', // Trata a coluna 'data' como um objeto Carbon (date ou datetime)
+    ];
+
+    /**
      * Get the pautas for the sessao.
      */
     public function pautas(): HasMany 
