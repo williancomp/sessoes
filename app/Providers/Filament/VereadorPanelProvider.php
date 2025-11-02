@@ -53,6 +53,7 @@ class VereadorPanelProvider extends PanelProvider
             ])
             ->authMiddleware([
                 Authenticate::class,
-            ]);
+            ])
+            ->viteTheme('resources/css/filament/vereador/theme.css');
     }
 }

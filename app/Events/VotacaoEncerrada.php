@@ -4,21 +4,17 @@ namespace App\Events;
 
 use Illuminate\Broadcasting\Channel;
 use Illuminate\Broadcasting\InteractsWithSockets;
-use Illuminate\Broadcasting\PresenceChannel;
-use Illuminate\Broadcasting\PrivateChannel;
 use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
 use Illuminate\Foundation\Events\Dispatchable;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Contracts\Events\ShouldDispatchAfterCommit;
 
-class VotacaoEncerrada implements ShouldBroadcast
+class VotacaoEncerrada implements ShouldBroadcast, ShouldDispatchAfterCommit
 {
     use Dispatchable, InteractsWithSockets, SerializesModels;
 
     public int $pautaId;
 
-    /**
-     * Create a new event instance.
-     */
     public function __construct(int $pautaId)
     {
         $this->pautaId = $pautaId;
@@ -27,5 +23,17 @@ class VotacaoEncerrada implements ShouldBroadcast
     public function broadcastOn(): array
     {
         return [new Channel('sessao-plenaria')];
+    }
+
+    public function broadcastAs(): string
+    {
+        return 'VotacaoEncerrada';
+    }
+
+    public function broadcastWith(): array
+    {
+        return [
+            'pautaId' => $this->pautaId,
+        ];
     }
 }

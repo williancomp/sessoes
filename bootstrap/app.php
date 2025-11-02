@@ -12,7 +12,10 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        //
+        // Middleware para verificar estado global em rotas web
+        $middleware->web(append: [
+            \App\Http\Middleware\VerificarEstadoGlobal::class,
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //

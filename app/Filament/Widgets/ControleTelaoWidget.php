@@ -3,16 +3,18 @@
 namespace App\Filament\Widgets;
 
 use App\Events\LayoutTelaoAlterado;
+use App\Events\PalavraEstadoAlterado;
 use App\Events\VotacaoAberta;
 use App\Events\VotacaoEncerrada;
 use App\Models\Pauta;
 use App\Models\Sessao;
+use App\Models\Vereador;
+use App\Services\EstadoGlobalService;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Concerns\InteractsWithForms;
 use Filament\Forms\Contracts\HasForms;
 use Filament\Notifications\Notification;
 use Filament\Widgets\Widget;
-use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 
@@ -22,19 +24,34 @@ class ControleTelaoWidget extends Widget implements HasForms
 
     protected string $view = 'filament.widgets.controle-telao-widget';
     protected int | string | array $columnSpan = 1;
+    
 
     public ?int $sessaoAtivaId = null;
     public ?Pauta $pautaEmVotacao = null;
     public ?int $pauta_id_votacao = null;
+
+
+    // --- NOVAS PROPRIEDADES PARA O CRONÔMETRO ---
+    public ?int $vereador_palavra_id = null;
+    public ?Vereador $vereadorComPalavra = null;
+    public string $palavraStatus = 'stopped'; // 'stopped', 'running', 'paused'
+    public int $palavraSegundosRestantes = 0;
+    public ?int $palavraTimestampInicio = null;
     
-    // Estados de exibição
-    public bool $mostrarFormAbrir = false;
-    public bool $mostrarConfirmacaoEncerrar = false;
+    
 
     public function mount(): void
     {
-        $this->sessaoAtivaId = Cache::get('sessao_ativa_id');
+        $this->verificarSessaoAtiva();
         $this->atualizarEstadoVotacao();
+        $this->atualizarEstadoPalavra();
+    }
+
+    
+    public function verificarSessaoAtiva(): void
+    {
+        $sessao = app(EstadoGlobalService::class)->getSessaoAtiva();
+        $this->sessaoAtivaId = $sessao['id'] ?? null;
     }
 
     protected function getFormSchema(): array
@@ -46,10 +63,14 @@ class ControleTelaoWidget extends Widget implements HasForms
                     if (!$this->sessaoAtivaId) {
                         return [];
                     }
-                    return Pauta::where('sessao_id', $this->sessaoAtivaId)
-                        ->whereIn('status', ['aguardando', 'em_discussao', 'em_votacao'])
-                        ->orderBy('ordem')
-                        ->pluck('numero', 'id');
+                    
+                    $cacheKey = "pautas_disponiveis_{$this->sessaoAtivaId}";
+                    return Cache::remember($cacheKey, 30, function () {
+                        return Pauta::where('sessao_id', $this->sessaoAtivaId)
+                            ->whereIn('status', ['aguardando', 'em_discussao', 'em_votacao'])
+                            ->orderBy('ordem')
+                            ->pluck('numero', 'id');
+                    });
                 })
                 ->required()
                 ->searchable()
@@ -57,23 +78,33 @@ class ControleTelaoWidget extends Widget implements HasForms
         ];
     }
 
-    public function mudarLayoutTelao(string $layout, ?int $pautaId = null): void
+    public function mudarLayoutTelao(string $layout, ?array $dadosPayload = null): void
     {
         $data = null;
-        if ($layout === 'layout-pauta' && $pautaId) {
-            $pauta = Pauta::find($pautaId);
+        
+        if ($layout === 'layout-pauta' && isset($dadosPayload['pauta_id'])) {
+            $pauta = Pauta::find($dadosPayload['pauta_id']);
             if($pauta) {
                 $data = $pauta->toArray();
                 if($pauta->status === 'aguardando') {
                     $pauta->update(['status' => 'em_discussao']);
                 }
             }
+        } elseif ($layout === 'layout-palavra' && isset($dadosPayload['vereador_id'])) {
+            $vereador = Vereador::find($dadosPayload['vereador_id']);
+            if ($vereador) {
+                // Passa dados relevantes para o telão
+                $data = [
+                    'id' => $vereador->id,
+                    'nome_parlamentar' => $vereador->nome_parlamentar,
+                ];
+            }
         } elseif ($layout === 'layout-votacao' && $this->pautaEmVotacao) {
             $data = $this->pautaEmVotacao->toArray();
         }
 
-        Cache::put('telao_layout', $layout);
-        Cache::put('telao_layout_data_pauta_id', $pautaId);
+        app(EstadoGlobalService::class)->setTelaoLayout($layout);
+        // Cache::put('telao_layout_data_pauta_id', $pautaId); // Esta linha parece desatualizada, $data é mais flexível
 
         broadcast(new LayoutTelaoAlterado($layout, $data))->toOthers();
         Log::info("Layout do telão alterado para: {$layout}", ['data' => $data]);
@@ -88,19 +119,7 @@ class ControleTelaoWidget extends Widget implements HasForms
         }
     }
 
-    // Métodos para controlar exibição do formulário
-    public function mostrarFormularioAbrir(): void
-    {
-        $this->mostrarFormAbrir = true;
-        $this->pauta_id_votacao = null;
-    }
-
-    public function cancelarAbrirVotacao(): void
-    {
-        $this->mostrarFormAbrir = false;
-        $this->pauta_id_votacao = null;
-    }
-
+    
     public function confirmarAbrirVotacao(): void
     {
         $this->validate([
@@ -113,7 +132,6 @@ class ControleTelaoWidget extends Widget implements HasForms
             ->first();
 
         if ($pauta && $pauta->status !== 'votada') {
-            // Fecha outras votações abertas
             Pauta::where('sessao_id', $this->sessaoAtivaId)
                 ->where('status', 'em_votacao')
                 ->where('id', '!=', $pauta->id)
@@ -122,7 +140,16 @@ class ControleTelaoWidget extends Widget implements HasForms
             $pauta->update(['status' => 'em_votacao']);
             $this->pautaEmVotacao = $pauta;
 
-            $this->mudarLayoutTelao('layout-votacao', $pauta->id);
+            $votacaoData = [
+                'pauta_id' => $pauta->id,
+                'pauta_numero' => $pauta->numero,
+                'pauta_descricao' => $pauta->descricao, 
+                'pauta_autor' => $pauta->autor,
+                'iniciada_em' => now()->timestamp,
+            ];
+            app(EstadoGlobalService::class)->setVotacaoAtiva($votacaoData);
+            
+            $this->mudarLayoutTelao('layout-votacao'); // A pauta é pega de $this->pautaEmVotacao
 
             broadcast(new VotacaoAberta($pauta))->toOthers();
             Log::info("Votação aberta para Pauta ID: {$pauta->id}");
@@ -133,8 +160,10 @@ class ControleTelaoWidget extends Widget implements HasForms
                 ->send();
                 
             $this->atualizarEstadoVotacao();
-            $this->mostrarFormAbrir = false;
-            $this->pauta_id_votacao = null;
+            
+            // ATUALIZADO: Despacha evento para fechar o modal
+            $this->dispatch('close-modal', id: 'abrir-votacao');
+            $this->pauta_id_votacao = null; // Limpa o select
         } else {
             Notification::make()
                 ->title("Não foi possível abrir a votação.")
@@ -143,25 +172,23 @@ class ControleTelaoWidget extends Widget implements HasForms
         }
     }
 
-    // Métodos para controlar confirmação de encerrar
-    public function mostrarConfirmacaoEncerrar(): void
-    {
-        $this->mostrarConfirmacaoEncerrar = true;
-    }
+    
 
-    public function cancelarEncerrarVotacao(): void
-    {
-        $this->mostrarConfirmacaoEncerrar = false;
-    }
 
     public function confirmarEncerrarVotacao(): void
     {
+        
+        
         if ($this->pautaEmVotacao) {
             $pauta = $this->pautaEmVotacao;
+            Log::info("DEBUG: Encerrando votação para pauta ID: {$pauta->id}");
+            
             $pauta->update(['status' => 'votada']);
 
             $pautaIdEncerrada = $pauta->id;
             $this->pautaEmVotacao = null;
+
+            app(EstadoGlobalService::class)->setVotacaoAtiva(null);
 
             broadcast(new VotacaoEncerrada($pautaIdEncerrada))->toOthers();
             Log::info("Votação encerrada para Pauta ID: {$pautaIdEncerrada}");
@@ -172,8 +199,11 @@ class ControleTelaoWidget extends Widget implements HasForms
                 ->send();
                 
             $this->atualizarEstadoVotacao();
-            $this->mostrarConfirmacaoEncerrar = false;
+
+            // ATUALIZADO: Despacha evento para fechar o modal
+            $this->dispatch('close-modal', id: 'confirmar-encerrar-votacao');
         } else {
+            
             Notification::make()
                 ->title("Nenhuma votação em andamento para encerrar.")
                 ->warning()
@@ -190,25 +220,217 @@ class ControleTelaoWidget extends Widget implements HasForms
             ->toArray();
     }
 
+    public function getVereadoresOptions(): array
+    {
+        // Cacheia a lista por 1 minuto para performance
+        return Cache::remember('vereadores_options', 60, function () {
+            return Vereador::orderBy('nome_parlamentar')
+                ->pluck('nome_parlamentar', 'id')
+                ->toArray();
+        });
+    }
+
     public function atualizarEstadoVotacao(): void
     {
-        if (!$this->sessaoAtivaId) {
+        $votacaoAtiva = app(EstadoGlobalService::class)->getVotacaoAtiva();
+        if ($votacaoAtiva) {
+            $this->pautaEmVotacao = Pauta::find($votacaoAtiva['pauta_id']);
+        } else {
             $this->pautaEmVotacao = null;
-            return;
-        }
+        }    
+    }
+
+    /**
+     * Carrega o estado atual da palavra (quem está falando)
+     */
+    public function atualizarEstadoPalavra(): void
+    {
+        $estado = app(EstadoGlobalService::class)->getPalavraAtiva();
         
-        $this->pautaEmVotacao = Pauta::where('sessao_id', $this->sessaoAtivaId)
-            ->where('status', 'em_votacao')
-            ->first();
+        if ($estado) {
+            $this->vereador_palavra_id = $estado['vereador']['id'] ?? null;
+            $this->vereadorComPalavra = $this->vereador_palavra_id ? Vereador::find($this->vereador_palavra_id) : null;
+            $this->palavraStatus = $estado['status'] ?? 'stopped';
+            $this->palavraSegundosRestantes = $estado['segundos_restantes'] ?? 0;
+            $this->palavraTimestampInicio = $estado['timestamp_inicio'] ?? null;
+        } else {
+            $this->limparEstadoPalavra();
+        }
+    }
+
+    /**
+     * Limpa o estado da palavra
+     */
+    private function limparEstadoPalavra(): void
+    {
+        $this->vereador_palavra_id = null;
+        $this->vereadorComPalavra = null;
+        $this->palavraStatus = 'stopped';
+        $this->palavraSegundosRestantes = 0;
+        $this->palavraTimestampInicio = null;
+    }
+
+    /**
+     * Ação: Define o vereador que vai falar (mas não inicia o tempo)
+     */
+    public function selecionarVereadorParaPalavra(int $vereadorId): void
+    {
+        $this->vereador_palavra_id = $vereadorId;
+        $this->vereadorComPalavra = Vereador::find($vereadorId);
+        $this->palavraStatus = 'selected'; 
+        $this->palavraSegundosRestantes = 0;
+        $this->palavraTimestampInicio = null;
+
+        // Salva o estado no cache
+        $estado = [
+            'vereador' => ['id' => $this->vereadorComPalavra->id, 'nome_parlamentar' => $this->vereadorComPalavra->nome_parlamentar],
+            'status' => 'selected',
+            'segundos_restantes' => 0,
+            'timestamp_inicio' => null,
+        ];
+        app(EstadoGlobalService::class)->setPalavraAtiva($estado);
+
+        // Atualiza o telão para mostrar quem foi selecionado
+        $this->mudarLayoutTelao('layout-palavra', ['vereador_id' => $vereadorId]);
+        
+        // Notifica outros clientes (outros operadores, se houver)
+        broadcast(new PalavraEstadoAlterado(
+            'selecionado', 
+            $this->vereadorComPalavra, 
+            0
+        ))->toOthers();
+    }
+
+    /**
+     * Ação: Inicia o cronômetro para o vereador selecionado
+     */
+    public function concederPalavra(int $segundos): void
+    {
+        if (!$this->vereadorComPalavra) return;
+
+        $this->palavraStatus = 'running';
+        $this->palavraSegundosRestantes = $segundos;
+        $this->palavraTimestampInicio = now()->timestamp;
+
+        $estado = [
+            'vereador' => ['id' => $this->vereadorComPalavra->id, 'nome_parlamentar' => $this->vereadorComPalavra->nome_parlamentar],
+            'status' => 'running',
+            'segundos_restantes' => $this->palavraSegundosRestantes,
+            'timestamp_inicio' => $this->palavraTimestampInicio,
+        ];
+        
+        app(EstadoGlobalService::class)->setPalavraAtiva($estado);
+        
+        broadcast(new PalavraEstadoAlterado(
+            'iniciada', 
+            $this->vereadorComPalavra, 
+            $this->palavraSegundosRestantes,
+            $this->palavraTimestampInicio
+        ))->toOthers();
+    }
+
+    /**
+     * Ação: Pausa o cronômetro
+     * Recebe o tempo restante do JavaScript
+     */
+    public function pausarPalavra(int $segundosRestantesJS): void
+    {
+        if (!$this->vereadorComPalavra || $this->palavraStatus !== 'running') return;
+
+        $this->palavraStatus = 'paused';
+        $this->palavraSegundosRestantes = $segundosRestantesJS; // Confia no tempo do cliente
+        $this->palavraTimestampInicio = null;
+
+        $estado = [
+            'vereador' => ['id' => $this->vereadorComPalavra->id, 'nome_parlamentar' => $this->vereadorComPalavra->nome_parlamentar],
+            'status' => 'paused',
+            'segundos_restantes' => $this->palavraSegundosRestantes,
+            'timestamp_inicio' => null,
+        ];
+        
+        app(EstadoGlobalService::class)->setPalavraAtiva($estado);
+
+        broadcast(new PalavraEstadoAlterado(
+            'pausada', 
+            $this->vereadorComPalavra, 
+            $this->palavraSegundosRestantes
+        ))->toOthers();
+    }
+
+    /**
+     * Ação: Retoma o cronômetro
+     */
+    public function retomarPalavra(): void
+    {
+        if (!$this->vereadorComPalavra || $this->palavraStatus !== 'paused') return;
+
+        $this->palavraStatus = 'running';
+        $this->palavraTimestampInicio = now()->timestamp; // Novo início
+
+        $estado = [
+            'vereador' => ['id' => $this->vereadorComPalavra->id, 'nome_parlamentar' => $this->vereadorComPalavra->nome_parlamentar],
+            'status' => 'running',
+            'segundos_restantes' => $this->palavraSegundosRestantes,
+            'timestamp_inicio' => $this->palavraTimestampInicio,
+        ];
+        
+        app(EstadoGlobalService::class)->setPalavraAtiva($estado);
+
+        broadcast(new PalavraEstadoAlterado(
+            'retomada', 
+            $this->vereadorComPalavra, 
+            $this->palavraSegundosRestantes,
+            $this->palavraTimestampInicio
+        ))->toOthers();
+    }
+
+    /**
+     * Ação: Encerra/Cancela a palavra
+     */
+    public function encerrarPalavra(): void
+    {
+        $vereadorAnterior = $this->vereadorComPalavra;
+        
+        app(EstadoGlobalService::class)->setPalavraAtiva(null);
+        
+        broadcast(new PalavraEstadoAlterado(
+            'encerrada', 
+            $vereadorAnterior, 
+            0
+        ))->toOthers();
+
+        $this->limparEstadoPalavra();
+        
+        // Manda o telão de volta para a tela inicial
+        $this->mudarLayoutTelao('layout-inicial');
     }
 
     protected function getListeners(): array
     {
         return [
-            'echo:sessao-plenaria,VotacaoAberta' => 'atualizarEstadoVotacao',
-            'echo:sessao-plenaria,VotacaoEncerrada' => 'atualizarEstadoVotacao',
-            'sessaoIniciada' => 'atualizarEstadoVotacao',
-            'sessaoEncerrada' => 'atualizarEstadoVotacao',
+            'echo:sessao-plenaria,VotacaoAberta' => 'handleVotacaoAberta',
+            'echo:sessao-plenaria,VotacaoEncerrada' => 'handleVotacaoEncerrada',
+            'echo:sessao-plenaria,PalavraEstadoAlterado' => 'handlePalavraEstadoAlterado', 
         ];
     }
+
+    public function handleVotacaoAberta($event): void
+    {
+        Log::info('Widget ControleTelao: VotacaoAberta recebido', ['event' => $event]);
+        $this->atualizarEstadoVotacao();
+    }
+
+    public function handleVotacaoEncerrada($event): void
+    {
+        Log::info('Widget ControleTelao: VotacaoEncerrada recebido', ['event' => $event]);
+        $this->atualizarEstadoVotacao();
+    }
+
+    public function handlePalavraEstadoAlterado($event): void
+    {
+        Log::info('Widget ControleTelao: PalavraEstadoAlterado recebido', ['event' => $event]);
+        $this->atualizarEstadoPalavra();
+    }
+
+    
 }

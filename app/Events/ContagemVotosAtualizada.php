@@ -7,8 +7,9 @@ use Illuminate\Broadcasting\InteractsWithSockets;
 use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
 use Illuminate\Foundation\Events\Dispatchable;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Contracts\Events\ShouldDispatchAfterCommit;
 
-class ContagemVotosAtualizada implements ShouldBroadcast
+class ContagemVotosAtualizada implements ShouldBroadcast, ShouldDispatchAfterCommit
 {
     use Dispatchable, InteractsWithSockets, SerializesModels;
 
@@ -28,5 +29,20 @@ class ContagemVotosAtualizada implements ShouldBroadcast
     public function broadcastOn(): array
     {
         return [new Channel('sessao-plenaria')];
+    }
+
+    public function broadcastAs(): string
+    {
+        return 'ContagemVotosAtualizada';
+    }
+
+    public function broadcastWith(): array
+    {
+        return [
+            'pautaId' => $this->pautaId,
+            'sim' => $this->sim,
+            'nao' => $this->nao,
+            'abst' => $this->abst,
+        ];
     }
 }

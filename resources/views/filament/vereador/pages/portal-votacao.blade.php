@@ -1,9 +1,8 @@
-@vite(['resources/js/app.js'])
-
 <x-filament-panels::page>
+    @vite(['resources/js/app.js'])
     <div 
         class="space-y-4"
-        wire:poll.5000ms="atualizarEstadoPeloBanco"
+        
     >
         
         @if ($votacaoAberta)
@@ -84,4 +83,20 @@
             </div>
         @endif
     </div>
+
+    <script>
+        // Debug para verificar se Livewire está carregado
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('Livewire carregado:', typeof window.Livewire !== 'undefined');
+            console.log('Echo carregado:', typeof window.Echo !== 'undefined');
+            console.log('DOM carregado');
+            
+            // Adicionar listener de clique para debug
+            document.addEventListener('click', function(e) {
+                if (e.target.closest('[wire\\:click]')) {
+                    console.log('Clique em elemento Livewire detectado:', e.target);
+                }
+            });
+        });
+    </script>
 </x-filament-panels::page>

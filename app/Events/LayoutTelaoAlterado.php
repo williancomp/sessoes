@@ -9,8 +9,9 @@ use Illuminate\Broadcasting\PrivateChannel;
 use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
 use Illuminate\Foundation\Events\Dispatchable;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Contracts\Events\ShouldDispatchAfterCommit;
 
-class LayoutTelaoAlterado implements ShouldBroadcast
+class LayoutTelaoAlterado implements ShouldBroadcast, ShouldDispatchAfterCommit
 {
     use Dispatchable, InteractsWithSockets, SerializesModels;
 
@@ -38,5 +39,10 @@ class LayoutTelaoAlterado implements ShouldBroadcast
         return [
             new Channel('sessao-plenaria'),
         ];
+    }
+
+    public function broadcastAs(): string
+    {
+        return 'LayoutTelaoAlterado';
     }
 }

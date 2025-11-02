@@ -5,37 +5,42 @@ namespace App\Events;
 use App\Models\Pauta;
 use Illuminate\Broadcasting\Channel;
 use Illuminate\Broadcasting\InteractsWithSockets;
-// Presença/Canal Privado não são necessários aqui
-// use Illuminate\Broadcasting\PresenceChannel;
-// use Illuminate\Broadcasting\PrivateChannel;
 use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
 use Illuminate\Foundation\Events\Dispatchable;
 use Illuminate\Queue\SerializesModels; 
+use Illuminate\Contracts\Events\ShouldDispatchAfterCommit;
 
-class VotacaoAberta implements ShouldBroadcast
+class VotacaoAberta implements ShouldBroadcast, ShouldDispatchAfterCommit
 {
-    // Use os traits necessários, incluindo SerializesModels
     use Dispatchable, InteractsWithSockets, SerializesModels;
 
-    // Declare a propriedade pública com o tipo correto
     public Pauta $pauta;
 
-    /**
-     * Create a new event instance.
-     * Use a tipagem consistente no construtor.
-     */
     public function __construct(Pauta $pauta)
     {
         $this->pauta = $pauta;
     }
 
-    /**
-     * Get the channels the event should broadcast on.
-     *
-     * @return array<int, \Illuminate\Broadcasting\Channel>
-     */
     public function broadcastOn(): array
     {
         return [new Channel('sessao-plenaria')];
+    }
+
+    public function broadcastAs(): string
+    {
+        return 'VotacaoAberta';
+    }
+
+    public function broadcastWith(): array
+    {
+        return [
+            'pauta' => [
+                'id' => $this->pauta->id,
+                'numero' => $this->pauta->numero,
+                'descricao' => $this->pauta->descricao,
+                'autor' => $this->pauta->autor,
+                'sessao_id' => $this->pauta->sessao_id,
+            ],
+        ];
     }
 }

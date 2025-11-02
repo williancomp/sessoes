@@ -7,8 +7,7 @@
         @if ($sessaoAtivaId)
             <div 
                 class="max-h-96 overflow-y-auto space-y-2 pr-2" 
-                {{-- O wire:poll atualiza via Livewire como fallback --}}
-                wire:poll.10s="carregarDados" 
+                
             >
                 @forelse ($vereadores as $vereador)
                     <div class="flex items-center justify-between p-2 rounded border dark:border-gray-700">

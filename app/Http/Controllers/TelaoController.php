@@ -2,32 +2,44 @@
 
 namespace App\Http\Controllers;
 
+use App\Services\EstadoGlobalService;
 use Cache;
 use Illuminate\Http\Request;
-use Illuminate\View\View; // Importe a classe View
+use Illuminate\View\View;
 
 class TelaoController extends Controller
 {
+    public function __construct(
+        private EstadoGlobalService $estadoGlobal
+    ) {}
+
     /**
-     * Mostra a view do Telão Público.
+     * Mostra a view do Telão Público com estado global sincronizado.
      */
     public function show(): View
     {
-        $layoutInicial = Cache::get('telao_layout', 'layout-inicial');
-        $pautaId = Cache::get('telao_layout_data_pauta_id'); // Pega ID da pauta se houver
-        $dadosPauta = null;
-
-        if ($pautaId && ($layoutInicial === 'layout-pauta' || $layoutInicial === 'layout-votacao')) {
-             $pauta = \App\Models\Pauta::find($pautaId);
-             if($pauta) {
-                $dadosPauta = $pauta->toArray();
-             }
+        // Obtém estado global completo
+        $estadoCompleto = $this->estadoGlobal->getEstadoCompleto();
+        
+        // Extrai dados específicos para compatibilidade
+        $layoutInicial = $estadoCompleto['telao_layout']['layout'] ?? 'layout-inicial';
+        $dadosPautaInicial = $estadoCompleto['telao_layout']['dados'] ?? null;
+        
+        // Se há votação ativa, usa os dados da votação
+        if ($estadoCompleto['votacao_ativa']) {
+            // ATUALIZADO: Adicionado '?? null' para evitar erros
+            $dadosPautaInicial = [
+                'id' => $estadoCompleto['votacao_ativa']['pauta_id'] ?? null,
+                'numero' => $estadoCompleto['votacao_ativa']['pauta_numero'] ?? null,
+                'descricao' => $estadoCompleto['votacao_ativa']['pauta_descricao'] ?? null,
+                'autor' => $estadoCompleto['votacao_ativa']['pauta_autor'] ?? null,
+            ];
         }
 
         return view('telao', [
             'layoutInicial' => $layoutInicial,
-            'dadosPautaInicial' => $dadosPauta, // Passa os dados da pauta inicial
-            // Passar dados iniciais de presença e votação se necessário
+            'dadosPautaInicial' => $dadosPautaInicial,
+            'estadoGlobal' => $estadoCompleto,
         ]);
     }
 }

@@ -7,6 +7,7 @@ use App\Models\Presenca;
 use App\Models\Sessao;
 use App\Models\Vereador;
 use App\Models\Voto;
+use App\Services\EstadoGlobalService;
 use Filament\Widgets\Widget;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\Cache;
@@ -30,6 +31,9 @@ class StatusVereadoresWidget extends Widget
         $this->carregarDados();
     }
 
+    /**
+     * LIVEWIRE 3: Formato correto para Echo listeners (sem ponto antes do evento)
+     */
     protected function getListeners(): array
     {
         return [
@@ -44,7 +48,8 @@ class StatusVereadoresWidget extends Widget
 
     public function carregarDados(): void
     {
-        $this->sessaoAtivaId = Cache::get('sessao_ativa_id');
+        $sessao = app(EstadoGlobalService::class)->getSessaoAtiva();
+        $this->sessaoAtivaId = $sessao['id'] ?? null;
 
         if (!$this->sessaoAtivaId) {
             $this->limparDados();
@@ -69,12 +74,9 @@ class StatusVereadoresWidget extends Widget
             'presencas' => $this->presenca
         ]);
 
-        // Verifica se há pauta em votação
-        $pautaEmVotacao = Pauta::where('sessao_id', $this->sessaoAtivaId)
-            ->where('status', 'em_votacao')
-            ->first();
-            
-        $this->pautaEmVotacaoId = $pautaEmVotacao?->id;
+        // Usa EstadoGlobalService para obter votação ativa
+        $votacaoAtiva = app(EstadoGlobalService::class)->getVotacaoAtiva();
+        $this->pautaEmVotacaoId = $votacaoAtiva['pauta_id'] ?? null;
 
         if ($this->pautaEmVotacaoId) {
             $this->votos = Voto::where('pauta_id', $this->pautaEmVotacaoId)
@@ -116,14 +118,36 @@ class StatusVereadoresWidget extends Widget
     public function handleVotoRegistrado($event): void
     {
         Log::info('Widget StatusVereadores: VotoRegistrado recebido', ['event' => $event]);
-        
-        if ($this->pautaEmVotacaoId) {
-            $vereadorId = $event['vereadorId'] ?? $event['vereador_id'] ?? null;
-            $voto = $event['voto'] ?? null;
+
+        $pautaIdDoVoto = $event['pautaId'] ?? null; 
+        $vereadorId = $event['vereadorId'] ?? null;
+        $voto = $event['voto'] ?? null;
+
+        // Verifica se o voto é para a pauta atualmente em votação neste widget
+        if ($this->pautaEmVotacaoId && $pautaIdDoVoto == $this->pautaEmVotacaoId && $vereadorId && $voto) {
             
-            if ($vereadorId && $voto) {
-                $this->votos[$vereadorId] = $voto;
-            }
+            // --- INÍCIO DA CORREÇÃO ---
+            // Em vez de modificar o array diretamente ($this->votos[$vereadorId] = $voto;),
+            // copiamos, modificamos e re-atribuímos para forçar o Livewire a re-renderizar.
+            
+            $votosAtuais = $this->votos; // 1. Copia o array
+            $votosAtuais[$vereadorId] = $voto; // 2. Modifica a cópia
+            $this->votos = $votosAtuais; // 3. Re-atribui. O Livewire agora detecta a mudança.
+            // --- FIM DA CORREÇÃO ---
+
+            Log::info('Voto adicionado/atualizado no array e re-atribuído', [
+                'pautaId' => $this->pautaEmVotacaoId,
+                'vereadorId' => $vereadorId,
+                'voto' => $voto
+            ]);
+
+            // Esta linha não é mais necessária se você removeu o cache do 'carregarDados',
+            // mas pode deixar se quiser.
+            $cacheKey = "votos_pauta_{$this->pautaEmVotacaoId}";
+            Cache::forget($cacheKey);
+
+        } else {
+            Log::warning('Voto recebido ignorado (pauta diferente ou dados ausentes)', ['event' => $event, 'pautaWidget' => $this->pautaEmVotacaoId]);
         }
     }
 
@@ -149,11 +173,5 @@ class StatusVereadoresWidget extends Widget
         }
     }
 
-    /**
-     * Polling como fallback
-     */
-    public function getPollingInterval(): ?string
-    {
-        return '15s';
-    }
+    
 }

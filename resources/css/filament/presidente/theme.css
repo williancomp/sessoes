@@ -1,0 +1,4 @@
+@import '../../../../vendor/filament/filament/resources/css/theme.css';
+
+@source '../../../../app/Filament/Presidente/**/*';
+@source '../../../../resources/views/filament/presidente/**/*';

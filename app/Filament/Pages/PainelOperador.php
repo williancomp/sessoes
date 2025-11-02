@@ -84,6 +84,5 @@ class PainelOperador extends Page
         ];
     }
 
-    // Não precisamos mais de getHeaderWidgets() ou getFooterWidgets() aqui,
-    // a menos que você queira widgets fixos no topo/rodapé da página inteira.
+   
 }

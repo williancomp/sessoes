@@ -13,7 +13,8 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        //
+        // Registra o EstadoGlobalService como singleton
+        $this->app->singleton(\App\Services\EstadoGlobalService::class);
     }
 
     /**
