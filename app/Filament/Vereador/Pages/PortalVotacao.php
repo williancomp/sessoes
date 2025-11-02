@@ -30,7 +30,8 @@ class PortalVotacao extends Page
     public int $placarNao = 0;
     public int $placarAbst = 0;
     
-
+    public bool $processandoVoto = false;
+    public ?string $ultimoVoto = null;
 
     /**
      * PERSISTÊNCIA: Executado quando a página carrega e a cada polling.
@@ -40,7 +41,6 @@ class PortalVotacao extends Page
         $this->atualizarEstadoPeloBanco();
     }
 
-    
     protected function getListeners(): array
     {
         return [
@@ -98,17 +98,16 @@ class PortalVotacao extends Page
         }
     }
 
-    public bool $processandoVoto = false;
-    public ?string $ultimoVoto = null;
-
     /**
      * Ação de registrar voto com feedback visual aprimorado
      */
     public function registrarVoto(string $voto): void
     {
+        Log::info('PortalVotacao: Iniciando registro de voto', ['voto' => $voto]);
         
         // Previne múltiplos cliques
         if ($this->processandoVoto) {
+            Log::warning('PortalVotacao: Voto já em processamento');
             return;
         }
 
@@ -117,6 +116,7 @@ class PortalVotacao extends Page
         try {
             // Validações
             if (!$this->votacaoAberta || !$this->pautaId) {
+                Log::warning('PortalVotacao: Tentativa de voto sem votação aberta');
                 Notification::make()
                     ->title('Não há votação aberta no momento.')
                     ->warning()
@@ -126,6 +126,7 @@ class PortalVotacao extends Page
             }
 
             if (!in_array($voto, ['sim', 'nao', 'abst'])) {
+                Log::error('PortalVotacao: Voto inválido', ['voto' => $voto]);
                 Notification::make()
                     ->title('Voto inválido.')
                     ->danger()
@@ -138,6 +139,7 @@ class PortalVotacao extends Page
             $vereador = Vereador::where('user_id', $user->id)->first();
             
             if (!$vereador) {
+                Log::error('PortalVotacao: Vereador não encontrado', ['user_id' => $user->id]);
                 Notification::make()
                     ->title('Erro: Vereador não encontrado.')
                     ->danger()
@@ -151,17 +153,21 @@ class PortalVotacao extends Page
                 ->where('vereador_id', $vereador->id)
                 ->first();
 
-            // 1. Registra o voto
+            // 1. Registra o voto no banco
             Voto::updateOrCreate(
                 ['pauta_id' => $this->pautaId, 'vereador_id' => $vereador->id],
                 ['voto' => $voto]
             );
 
+            Log::info('PortalVotacao: Voto registrado no banco', [
+                'vereador_id' => $vereador->id,
+                'pauta_id' => $this->pautaId,
+                'voto' => $voto
+            ]);
+
             $this->ultimoVoto = $voto;
 
-            
-
-            // Feedback personalizado baseado na ação
+            // Feedback personalizado
             $mensagem = $votoAnterior 
                 ? "Voto alterado para: " . strtoupper($voto)
                 : "Voto registrado: " . strtoupper($voto);
@@ -172,33 +178,51 @@ class PortalVotacao extends Page
                 ->duration(2000)
                 ->send();
 
-            // 2. Emite evento para o telão (nominal)
-            broadcast(new VotoRegistrado($vereador, $voto, $this->pautaId));
+            // 2. Emite evento VotoRegistrado para o telão e outros componentes
+            $eventoVoto = new VotoRegistrado($vereador, $voto, $this->pautaId);
+            
+            // Broadcast para WebSocket (telão e outros clientes)
+            broadcast($eventoVoto)->toOthers();
+            
+            Log::info('PortalVotacao: Evento VotoRegistrado emitido', [
+                'vereador_id' => $vereador->id,
+                'voto' => $voto,
+                'pauta_id' => $this->pautaId
+            ]);
 
-            // 3. Calcula e atualiza contagem usando EstadoGlobalService
+            // 3. Calcula e atualiza contagem
             $sim = Voto::where('pauta_id', $this->pautaId)->where('voto', 'sim')->count();
             $nao = Voto::where('pauta_id', $this->pautaId)->where('voto', 'nao')->count();
             $abst = Voto::where('pauta_id', $this->pautaId)->where('voto', 'abst')->count();
             
             $contagem = ['sim' => $sim, 'nao' => $nao, 'abst' => $abst];
+            
+            // Atualiza estado global
             app(EstadoGlobalService::class)->setContagemVotos($contagem);
 
-            // 4. Emite contagem atualizada
-            broadcast(new ContagemVotosAtualizada(
+            // 4. Emite evento de contagem atualizada
+            $eventoContagem = new ContagemVotosAtualizada(
                 $this->pautaId, 
                 $contagem['sim'], 
                 $contagem['nao'], 
                 $contagem['abst']
-            ));
+            );
+            
+            broadcast($eventoContagem)->toOthers();
+            
+            Log::info('PortalVotacao: Evento ContagemVotosAtualizada emitido', [
+                'contagem' => $contagem
+            ]);
 
-            // 5. Atualiza a própria tela instantaneamente
+            // 5. Atualiza a própria tela
             $this->placarSim = $contagem['sim'];
             $this->placarNao = $contagem['nao'];
             $this->placarAbst = $contagem['abst'];
 
         } catch (\Exception $e) {
-            Log::error('Erro ao registrar voto', [
+            Log::error('PortalVotacao: Erro ao registrar voto', [
                 'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
                 'voto' => $voto,
                 'pauta_id' => $this->pautaId
             ]);

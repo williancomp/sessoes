@@ -1,4 +1,7 @@
 <x-filament-panels::page>
+    {{-- Inclui o Vite com Echo --}}
+    @vite(['resources/js/app.js'])
+    
     {{--
         Este @if controla qual conjunto de widgets é renderizado
         baseado na propriedade $sessaoAtiva da Page class.

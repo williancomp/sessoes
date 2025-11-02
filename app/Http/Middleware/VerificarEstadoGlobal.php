@@ -30,9 +30,17 @@ class VerificarEstadoGlobal
         $response = $next($request);
 
         // Para requisições AJAX/Livewire, adiciona o estado atual nos headers
-        if ($request->ajax() || $request->wantsJson()) {
-            $estado = $this->estadoGlobal->getEstadoCompleto();
-            $response->headers->set('X-Estado-Global', json_encode($estado));
+        // APENAS se a resposta for válida
+        if (($request->ajax() || $request->wantsJson()) && $response instanceof Response) {
+            try {
+                $estado = $this->estadoGlobal->getEstadoCompleto();
+                $response->headers->set('X-Estado-Global', json_encode($estado));
+            } catch (\Exception $e) {
+                // Log do erro mas não interrompe a requisição
+                \Log::error('Erro ao adicionar estado global no header', [
+                    'error' => $e->getMessage()
+                ]);
+            }
         }
 
         return $response;

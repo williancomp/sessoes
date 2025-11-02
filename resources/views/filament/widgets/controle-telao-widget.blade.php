@@ -1,4 +1,7 @@
 <x-filament-widgets::widget>
+    {{-- Inclui o Vite com Echo --}}
+    @vite(['resources/js/app.js'])
+    
     <x-filament::section>
         <x-slot name="heading">
             Controle do Telão e Votação
@@ -131,7 +134,6 @@
                         @forelse ($this->getVereadoresOptions() as $vereadorId => $vereadorNome)
                             <x-filament::dropdown.list.item 
                                 href="#"
-                                {{-- ATUALIZADO: Chama 'selecionarVereadorParaPalavra' --}}
                                 x-on:click.prevent="$wire.selecionarVereadorParaPalavra({{ $vereadorId }}); close()"
                                 >
                                 {{ $vereadorNome }}
@@ -154,10 +156,9 @@
 
             <hr class="dark:border-gray-700 my-4"/>
 
-            {{-- NOVO: Seção do Cronômetro Palavra --}}
+            {{-- Seção do Cronômetro Palavra --}}
             <div 
                 class="space-y-3" 
-                {{-- Só mostra esta seção se um vereador foi selecionado ou já está falando --}}
                 x-show="status !== 'stopped'" 
                 x-transition
             >
@@ -203,20 +204,16 @@
                     </div>
                 </div>
             </div>
-            {{-- Fim da Seção Cronômetro --}}
 
-
-            {{-- Seção de Votação (existente) --}}
-            <div {{-- Seção de votação --}}
+            {{-- Seção de Votação --}}
+            <div>
                 @if ($this->pautaEmVotacao)
-                    {{-- ... (código existente para encerrar votação) ... --}}
                     <x-filament::button 
                         x-on:click="$dispatch('open-modal', { id: 'confirmar-encerrar-votacao' })"
                         icon="heroicon-o-stop" color="danger" size="sm" class="w-full">
                         Encerrar Votação
                     </x-filament::button>
                 @else
-                    {{-- ... (código existente para abrir votação) ... --}}
                     <x-filament::button
                         x-on:click="$dispatch('open-modal', { id: 'abrir-votacao' })"
                         icon="heroicon-o-play" color="success" size="sm" class="w-full">
@@ -225,14 +222,12 @@
                 @endif
             
                 @if ($this->pautaEmVotacao)
-                     {{-- ... (status em votação) ... --}}
                     <div class="mt-2 p-2 rounded-lg bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800">
                         <p class="text-sm text-center text-yellow-800 dark:text-yellow-200">
                             <strong>Em votação:</strong> {{ $this->pautaEmVotacao->numero }}
                         </p>
                     </div>
                 @else
-                    {{-- ... (status nenhuma votação) ... --}}
                     <div class="mt-2 p-2 rounded-lg bg-gray-50 dark:bg-gray-900/20 border border-gray-200 dark:border-gray-800">
                         <p class="text-sm text-center text-gray-600 dark:text-gray-400">
                             Nenhuma pauta em votação.
@@ -244,7 +239,7 @@
         </div> {{-- Fim do x-data --}}
     </x-filament::section>
     
-    {{-- NOVO: Modais v4 --}}
+    {{-- Modais v4 --}}
     
     {{-- Modal para Abrir Votação --}}
     <x-filament::modal id="abrir-votacao" width="lg">

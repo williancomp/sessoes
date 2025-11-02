@@ -12,18 +12,25 @@ use Filament\Widgets\Widget;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Contracts\View\View;
 
 class StatusVereadoresWidget extends Widget
 {
     protected string $view = 'filament.widgets.status-vereadores-widget';
     protected int | string | array $columnSpan = 2;
     protected static bool $isLazy = false;
+    
+    // IMPORTANTE: Adicionar wire:poll para atualização periódica como fallback
+    protected static ?int $pollingInterval = 2; // Atualiza a cada 2 segundos
 
     public ?int $sessaoAtivaId = null;
     public ?int $pautaEmVotacaoId = null;
     public Collection $vereadores;
     public array $presenca = [];
     public array $votos = [];
+    
+    // Adiciona contador para forçar re-render
+    public int $updateCounter = 0;
 
     public function mount(): void
     {
@@ -32,7 +39,29 @@ class StatusVereadoresWidget extends Widget
     }
 
     /**
-     * LIVEWIRE 3: Formato correto para Echo listeners (sem ponto antes do evento)
+     * Método de polling para atualizar votos periodicamente
+     */
+    public function poll(): void
+    {
+        if ($this->pautaEmVotacaoId) {
+            $votosAtuais = Voto::where('pauta_id', $this->pautaEmVotacaoId)
+                ->pluck('voto', 'vereador_id')
+                ->toArray();
+            
+            // Só atualiza se houver mudança
+            if ($votosAtuais !== $this->votos) {
+                Log::info('StatusVereadores: Detectada mudança nos votos via polling', [
+                    'antes' => count($this->votos),
+                    'depois' => count($votosAtuais)
+                ]);
+                $this->votos = $votosAtuais;
+                $this->updateCounter++; // Força re-render
+            }
+        }
+    }
+
+    /**
+     * LIVEWIRE 3: Listeners com sintaxe atualizada
      */
     protected function getListeners(): array
     {
@@ -43,11 +72,15 @@ class StatusVereadoresWidget extends Widget
             'echo:sessao-plenaria,VotacaoEncerrada' => 'handleVotacaoEncerrada',
             'sessaoIniciada' => 'carregarDados',
             'sessaoEncerrada' => 'limparDados',
+            'votoRegistradoLocal' => 'handleVotoRegistradoLocal', // Novo evento local
+            'refresh-widget' => '$refresh', // Para refresh manual
         ];
     }
 
     public function carregarDados(): void
     {
+        Log::info('StatusVereadores: Carregando dados');
+        
         $sessao = app(EstadoGlobalService::class)->getSessaoAtiva();
         $this->sessaoAtivaId = $sessao['id'] ?? null;
 
@@ -55,10 +88,6 @@ class StatusVereadoresWidget extends Widget
             $this->limparDados();
             return;
         }
-
-        Log::info('Carregando dados do widget StatusVereadores', [
-            'sessao_id' => $this->sessaoAtivaId
-        ]);
 
         // Carrega todos os vereadores
         $this->vereadores = Vereador::with('partido')->orderBy('nome_parlamentar')->get();
@@ -69,11 +98,6 @@ class StatusVereadoresWidget extends Widget
         
         $this->presenca = $presencas->pluck('presente', 'vereador_id')->toArray();
 
-        Log::info('Presenças carregadas', [
-            'total' => count($this->presenca),
-            'presencas' => $this->presenca
-        ]);
-
         // Usa EstadoGlobalService para obter votação ativa
         $votacaoAtiva = app(EstadoGlobalService::class)->getVotacaoAtiva();
         $this->pautaEmVotacaoId = $votacaoAtiva['pauta_id'] ?? null;
@@ -82,6 +106,12 @@ class StatusVereadoresWidget extends Widget
             $this->votos = Voto::where('pauta_id', $this->pautaEmVotacaoId)
                 ->pluck('voto', 'vereador_id')
                 ->toArray();
+            
+            Log::info('StatusVereadores: Votos carregados', [
+                'pauta_id' => $this->pautaEmVotacaoId,
+                'total_votos' => count($this->votos),
+                'votos' => $this->votos
+            ]);
         } else {
             $this->votos = [];
         }
@@ -94,84 +124,161 @@ class StatusVereadoresWidget extends Widget
         $this->vereadores = new Collection();
         $this->presenca = [];
         $this->votos = [];
+        $this->updateCounter = 0;
     }
 
     // --- Handlers de Eventos ---
 
     public function handlePresencaAtualizada($event): void
     {
-        Log::info('Widget StatusVereadores: PresencaAtualizada recebido', ['event' => $event]);
+        Log::info('StatusVereadores: PresencaAtualizada recebido', ['event' => $event]);
         
         if (($event['sessaoId'] ?? null) == $this->sessaoAtivaId) {
-            // Recarrega presenças
-            $this->presenca = Presenca::where('sessao_id', $this->sessaoAtivaId)
+            $presencas = Presenca::where('sessao_id', $this->sessaoAtivaId)
                 ->pluck('presente', 'vereador_id')
                 ->toArray();
                 
-            Log::info('Presenças atualizadas via evento', [
-                'total' => count($this->presenca),
-                'presencas' => $this->presenca
-            ]);
+            // Força re-atribuição completa
+            $this->presenca = [];
+            $this->presenca = $presencas;
+            $this->updateCounter++;
         }
     }
 
+    /**
+     * Handler principal para evento de voto via WebSocket
+     */
     public function handleVotoRegistrado($event): void
     {
-        Log::info('Widget StatusVereadores: VotoRegistrado recebido', ['event' => $event]);
+        Log::info('StatusVereadores: VotoRegistrado via WebSocket', [
+            'event' => $event,
+            'pautaEmVotacaoId' => $this->pautaEmVotacaoId
+        ]);
 
         $pautaIdDoVoto = $event['pautaId'] ?? null; 
         $vereadorId = $event['vereadorId'] ?? null;
         $voto = $event['voto'] ?? null;
 
-        // Verifica se o voto é para a pauta atualmente em votação neste widget
-        if ($this->pautaEmVotacaoId && $pautaIdDoVoto == $this->pautaEmVotacaoId && $vereadorId && $voto) {
-            
-            // --- INÍCIO DA CORREÇÃO ---
-            // Em vez de modificar o array diretamente ($this->votos[$vereadorId] = $voto;),
-            // copiamos, modificamos e re-atribuímos para forçar o Livewire a re-renderizar.
-            
-            $votosAtuais = $this->votos; // 1. Copia o array
-            $votosAtuais[$vereadorId] = $voto; // 2. Modifica a cópia
-            $this->votos = $votosAtuais; // 3. Re-atribui. O Livewire agora detecta a mudança.
-            // --- FIM DA CORREÇÃO ---
-
-            Log::info('Voto adicionado/atualizado no array e re-atribuído', [
-                'pautaId' => $this->pautaEmVotacaoId,
-                'vereadorId' => $vereadorId,
-                'voto' => $voto
+        // Verifica se é para a pauta atual
+        if (!$this->pautaEmVotacaoId || $pautaIdDoVoto != $this->pautaEmVotacaoId) {
+            Log::warning('StatusVereadores: Voto ignorado - pauta diferente', [
+                'pautaIdDoVoto' => $pautaIdDoVoto,
+                'pautaEmVotacaoId' => $this->pautaEmVotacaoId
             ]);
+            return;
+        }
 
-            // Esta linha não é mais necessária se você removeu o cache do 'carregarDados',
-            // mas pode deixar se quiser.
-            $cacheKey = "votos_pauta_{$this->pautaEmVotacaoId}";
-            Cache::forget($cacheKey);
+        if (!$vereadorId || !$voto) {
+            Log::warning('StatusVereadores: Voto ignorado - dados incompletos');
+            return;
+        }
 
-        } else {
-            Log::warning('Voto recebido ignorado (pauta diferente ou dados ausentes)', ['event' => $event, 'pautaWidget' => $this->pautaEmVotacaoId]);
+        // MÉTODO 1: Re-atribuição completa do array
+        $novosVotos = $this->votos;
+        $novosVotos[$vereadorId] = $voto;
+        
+        // Limpa e re-atribui para forçar detecção de mudança
+        $this->votos = [];
+        $this->votos = $novosVotos;
+        
+        // MÉTODO 2: Incrementa contador para forçar re-render
+        $this->updateCounter++;
+        
+        // MÉTODO 3: Dispara refresh explícito
+        $this->dispatch('$refresh');
+        
+        // MÉTODO 4: Recarrega dados do banco como fallback
+        $this->recarregarVotosDoBanco();
+        
+        Log::info('StatusVereadores: Voto processado com sucesso', [
+            'vereadorId' => $vereadorId,
+            'voto' => $voto,
+            'totalVotos' => count($this->votos),
+            'updateCounter' => $this->updateCounter
+        ]);
+    }
+
+    /**
+     * Recarrega votos diretamente do banco
+     */
+    private function recarregarVotosDoBanco(): void
+    {
+        if ($this->pautaEmVotacaoId) {
+            $votosNovos = Voto::where('pauta_id', $this->pautaEmVotacaoId)
+                ->pluck('voto', 'vereador_id')
+                ->toArray();
+            
+            $this->votos = [];
+            $this->votos = $votosNovos;
+            
+            Log::info('StatusVereadores: Votos recarregados do banco', [
+                'total' => count($this->votos)
+            ]);
+        }
+    }
+
+    /**
+     * Handler para evento local (alternativa ao WebSocket)
+     */
+    public function handleVotoRegistradoLocal($vereadorId, $voto): void
+    {
+        Log::info('StatusVereadores: VotoRegistradoLocal recebido', [
+            'vereadorId' => $vereadorId,
+            'voto' => $voto
+        ]);
+        
+        if ($this->pautaEmVotacaoId) {
+            $novosVotos = $this->votos;
+            $novosVotos[$vereadorId] = $voto;
+            $this->votos = [];
+            $this->votos = $novosVotos;
+            $this->updateCounter++;
         }
     }
 
     public function handleVotacaoAberta($event): void
     {
-        Log::info('Widget StatusVereadores: VotacaoAberta recebido', ['event' => $event]);
+        Log::info('StatusVereadores: VotacaoAberta recebido', ['event' => $event]);
         
         $pauta = $event['pauta'] ?? null;
         if ($pauta && ($pauta['sessao_id'] ?? null) == $this->sessaoAtivaId) {
             $this->pautaEmVotacaoId = $pauta['id'] ?? null;
             $this->votos = [];
+            $this->updateCounter++;
         }
     }
 
     public function handleVotacaoEncerrada($event): void
     {
-        Log::info('Widget StatusVereadores: VotacaoEncerrada recebido', ['event' => $event]);
+        Log::info('StatusVereadores: VotacaoEncerrada recebido', ['event' => $event]);
         
         $pautaIdEncerrada = $event['pautaId'] ?? null;
         if ($pautaIdEncerrada == $this->pautaEmVotacaoId) {
-            $this->pautaEmVotacaoId = null;
-            // Mantém votos visíveis após encerramento
+            // Mantém a pauta e votos visíveis, mas marca como encerrada
+            // Recarrega votos finais do banco
+            $this->recarregarVotosDoBanco();
+            $this->updateCounter++;
         }
     }
 
-    
+    /**
+     * Método render com tipo de retorno correto
+     */
+    public function render(): View
+    {
+        Log::debug('StatusVereadores: Renderizando', [
+            'updateCounter' => $this->updateCounter,
+            'totalVotos' => count($this->votos),
+            'pautaEmVotacaoId' => $this->pautaEmVotacaoId
+        ]);
+        
+        return view($this->view, [
+            'sessaoAtivaId' => $this->sessaoAtivaId,
+            'pautaEmVotacaoId' => $this->pautaEmVotacaoId,
+            'vereadores' => $this->vereadores,
+            'presenca' => $this->presenca,
+            'votos' => $this->votos,
+            'updateCounter' => $this->updateCounter,
+        ]);
+    }
 }
