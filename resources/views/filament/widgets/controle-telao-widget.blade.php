@@ -82,9 +82,11 @@
             {{-- Botões de Layout --}}
             <div class="grid grid-cols-3 gap-3">
                 <x-filament::button 
-                    wire:click="mudarLayoutTelao('layout-camera')" 
+                    wire:click="mudarLayoutTelao('layout-normal')" 
                     icon="heroicon-o-video-camera" 
-                    color="gray" size="sm" class="w-full">
+                    :color="$this->isCameraAtiva() ? 'success' : 'gray'" 
+                    size="sm" 
+                    class="w-full {{ $this->isCameraAtiva() ? 'ring-2 ring-green-500 ring-offset-2 dark:ring-offset-gray-900' : '' }}">
                     Câmera
                 </x-filament::button>
 
@@ -93,15 +95,21 @@
                     <x-slot name="trigger">
                         <x-filament::button 
                             icon="heroicon-o-document-text" 
-                            color="gray" size="sm" class="w-full">
-                            Pauta Atual
+                            :color="$this->isPautaAtiva() ? 'success' : 'gray'" 
+                            size="sm" 
+                            class="w-full {{ $this->isPautaAtiva() ? 'ring-2 ring-green-500 ring-offset-2 dark:ring-offset-gray-900' : '' }}">
+                            @if($this->isPautaAtiva() && $this->getPautaAtivaNumero())
+                                {{ $this->getPautaAtivaNumero() }}
+                            @else
+                                Pauta Atual
+                            @endif
                         </x-filament::button>
                     </x-slot>
                     <x-filament::dropdown.list>
                         @forelse ($this->getPautasSessaoAtivaOptions() as $pautaId => $pautaNumero)
                             <x-filament::dropdown.list.item 
                                 href="#"
-                                x-on:click.prevent="$wire.mudarLayoutTelao('layout-pauta', { pauta_id: {{ $pautaId }} }); close()"
+                                x-on:click.prevent="$wire.mudarLayoutTelao('layout-normal', { pauta_id: {{ $pautaId }} }); close()"
                                 >
                                 {{ $pautaNumero }}
                             </x-filament::dropdown.list.item>
@@ -114,9 +122,11 @@
                 </x-filament::dropdown>
 
                 <x-filament::button 
-                    wire:click="mudarLayoutTelao('layout-votacao')" 
+                    wire:click="mudarLayoutTelao('layout-voting')" 
                     icon="heroicon-o-chart-bar" 
-                    color="gray" size="sm" class="w-full" 
+                    :color="$this->isVotacaoAtiva() ? 'success' : 'gray'" 
+                    size="sm" 
+                    class="w-full {{ $this->isVotacaoAtiva() ? 'ring-2 ring-green-500 ring-offset-2 dark:ring-offset-gray-900' : '' }}" 
                     :disabled="!$this->pautaEmVotacao">
                     Votação
                 </x-filament::button>
@@ -126,8 +136,14 @@
                     <x-slot name="trigger">
                         <x-filament::button 
                             icon="heroicon-o-microphone" 
-                            color="gray" size="sm" class="w-full">
-                            Palavra
+                            :color="$this->isPalavraAtiva() ? 'success' : 'gray'" 
+                            size="sm" 
+                            class="w-full {{ $this->isPalavraAtiva() ? 'ring-2 ring-green-500 ring-offset-2 dark:ring-offset-gray-900' : '' }}">
+                            @if($this->isPalavraAtiva() && $this->getVereadorAtivoPalavra())
+                                {{ $this->getVereadorAtivoPalavra() }}
+                            @else
+                                Palavra
+                            @endif
                         </x-filament::button>
                     </x-slot>
                     <x-filament::dropdown.list>
@@ -147,9 +163,11 @@
                 </x-filament::dropdown>
 
                 <x-filament::button 
-                    wire:click="mudarLayoutTelao('layout-inicial')" 
+                    wire:click="mudarLayoutTelao('layout-normal')" 
                     icon="heroicon-o-tv" 
-                    color="gray" size="sm" class="w-full col-span-2">
+                    :color="$this->isCameraAtiva() ? 'success' : 'gray'" 
+                    size="sm" 
+                    class="w-full col-span-2 {{ $this->isCameraAtiva() ? 'ring-2 ring-green-500 ring-offset-2 dark:ring-offset-gray-900' : '' }}">
                     Tela Inicial
                 </x-filament::button>
             </div>

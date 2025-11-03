@@ -82,7 +82,7 @@ class EstadoGlobalService
     public function getTelaoLayout(): array
     {
         return Cache::get(self::CACHE_TELAO_LAYOUT, [
-            'layout' => 'layout-inicial',
+            'layout' => 'layout-normal',
             'dados' => null,
             'timestamp' => now()->timestamp,
         ]);
@@ -195,7 +195,15 @@ class EstadoGlobalService
                 $cached = $this->calcularPresenca($sessao['id']);
                 $this->setPresenca($cached);
             } else {
-                $cached = ['presentes' => 0, 'ausentes' => 0, 'total' => 0];
+                // Se não há sessão ativa, ainda assim calcula baseado no total de vereadores
+                $totalVereadores = Vereador::count();
+                $cached = [
+                    'presentes' => 0, 
+                    'ausentes' => $totalVereadores, 
+                    'total' => $totalVereadores
+                ];
+                
+                Log::info('Estado Global: Presença calculada sem sessão ativa', $cached);
             }
         }
         
@@ -211,13 +219,34 @@ class EstadoGlobalService
     private function calcularPresenca(int $sessaoId): array
     {
         $totalVereadores = Vereador::count();
+        
+        // Se não há vereadores cadastrados, retorna zeros
+        if ($totalVereadores === 0) {
+            Log::warning('Estado Global: Nenhum vereador cadastrado no sistema');
+            return [
+                'presentes' => 0,
+                'ausentes' => 0,
+                'total' => 0,
+            ];
+        }
+        
         $presentes = \App\Models\Presenca::where('sessao_id', $sessaoId)
             ->where('presente', true)
             ->count();
         
+        $ausentes = $totalVereadores - $presentes;
+        
+        // Log para debug
+        Log::debug('Estado Global: Presença calculada', [
+            'sessao_id' => $sessaoId,
+            'total_vereadores' => $totalVereadores,
+            'presentes' => $presentes,
+            'ausentes' => $ausentes
+        ]);
+        
         return [
             'presentes' => $presentes,
-            'ausentes' => $totalVereadores - $presentes,
+            'ausentes' => $ausentes,
             'total' => $totalVereadores,
         ];
     }

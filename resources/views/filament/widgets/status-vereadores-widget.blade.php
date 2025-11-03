@@ -22,12 +22,13 @@
                         <div class="flex items-center space-x-2">
                             {{-- Status Presença --}}
                             <span 
-                                wire:key="presenca-{{ $vereador->id }}-{{ $updateCounter }}"
+                                wire:key="presenca-icon-{{ $vereador->id }}-{{ $updateCounter }}-{{ ($presenca[$vereador->id] ?? false) ? 'presente' : 'ausente' }}"
                                 @class([
-                                    'h-3 w-3 rounded-full',
-                                    'bg-green-500' => $presenca[$vereador->id] ?? false,
+                                    'h-3 w-3 rounded-full transition-colors duration-300',
+                                    'bg-green-500 shadow-green-300 shadow-sm' => $presenca[$vereador->id] ?? false,
                                     'bg-gray-400 dark:bg-gray-600' => !($presenca[$vereador->id] ?? false),
                                 ])
+                                title="{{ ($presenca[$vereador->id] ?? false) ? 'Presente' : 'Ausente' }}"
                             ></span>
                             <span>{{ $vereador->nome_parlamentar }}</span>
                             <span class="text-xs text-gray-500 dark:text-gray-400">({{ $vereador->partido?->sigla ?? 'S/P' }})</span>

@@ -113,8 +113,12 @@ class StatusVereadoresWidget extends Widget
                 'votos' => $this->votos
             ]);
         } else {
+            // Se não há votação ativa, limpa os votos
             $this->votos = [];
+            Log::info('StatusVereadores: Nenhuma votação ativa - votos limpos');
         }
+        
+        $this->updateCounter++;
     }
 
     public function limparDados(): void
@@ -134,15 +138,62 @@ class StatusVereadoresWidget extends Widget
         Log::info('StatusVereadores: PresencaAtualizada recebido', ['event' => $event]);
         
         if (($event['sessaoId'] ?? null) == $this->sessaoAtivaId) {
-            $presencas = Presenca::where('sessao_id', $this->sessaoAtivaId)
-                ->pluck('presente', 'vereador_id')
-                ->toArray();
-                
-            // Força re-atribuição completa
-            $this->presenca = [];
-            $this->presenca = $presencas;
+            // CORREÇÃO: Implementação mais robusta para atualização em tempo real
+            
+            // 1. Recarrega dados de presença diretamente do banco
+            $this->recarregarPresenca();
+            
+            // 2. Força múltiplas estratégias de re-render
             $this->updateCounter++;
+            
+            // 3. Força refresh do componente Livewire
+            $this->dispatch('$refresh');
+            
+            // 4. Força re-render do componente pai (se houver)
+            $this->dispatch('refresh-widget');
+            
+            Log::info('StatusVereadores: Presença atualizada com sucesso', [
+                'sessao_id' => $this->sessaoAtivaId,
+                'update_counter' => $this->updateCounter,
+                'total_presencas' => count($this->presenca ?? []),
+                'presenca_data' => $this->presenca
+            ]);
+        } else {
+            Log::info('StatusVereadores: PresencaAtualizada ignorado - sessão diferente', [
+                'event_sessao_id' => $event['sessaoId'] ?? null,
+                'widget_sessao_id' => $this->sessaoAtivaId
+            ]);
         }
+    }
+    
+    /**
+     * Recarrega apenas os dados de presença
+     */
+    public function recarregarPresenca(): void
+    {
+        if (!$this->sessaoAtivaId) return;
+        
+        $presencas = Presenca::where('sessao_id', $this->sessaoAtivaId)
+            ->get();
+        
+        // CORREÇÃO: Força detecção de mudança no Livewire
+        // Limpa completamente o array antes de recarregar
+        $this->presenca = [];
+        
+        // Recarrega com nova referência de array
+        $novaPresenca = $presencas->pluck('presente', 'vereador_id')->toArray();
+        $this->presenca = $novaPresenca;
+        
+        // Força atualização do estado do componente
+        $this->updateCounter++;
+        
+        Log::info('StatusVereadores: Presença recarregada', [
+            'sessao_id' => $this->sessaoAtivaId,
+            'total_presencas' => count($this->presenca),
+            'presentes' => array_sum($this->presenca),
+            'presenca_data' => $this->presenca,
+            'update_counter' => $this->updateCounter
+        ]);
     }
 
     /**
@@ -254,10 +305,14 @@ class StatusVereadoresWidget extends Widget
         
         $pautaIdEncerrada = $event['pautaId'] ?? null;
         if ($pautaIdEncerrada == $this->pautaEmVotacaoId) {
-            // Mantém a pauta e votos visíveis, mas marca como encerrada
-            // Recarrega votos finais do banco
-            $this->recarregarVotosDoBanco();
+            // Limpa a votação ativa e os votos para ocultar as informações de votação
+            $this->pautaEmVotacaoId = null;
+            $this->votos = [];
             $this->updateCounter++;
+            
+            Log::info('StatusVereadores: Votação encerrada - votos limpos', [
+                'pautaIdEncerrada' => $pautaIdEncerrada
+            ]);
         }
     }
 

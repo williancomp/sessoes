@@ -3,6 +3,7 @@
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Services\EstadoGlobalService;
+use App\Http\Controllers\TelaoApiController;
 
 /*
 |--------------------------------------------------------------------------
@@ -22,6 +23,12 @@ Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
 // Rota de teste simples
 Route::get('/test', function () {
     return response()->json(['status' => 'ok', 'message' => 'API funcionando']);
+});
+
+// Rotas do Telão Vue.js
+Route::prefix('telao')->group(function () {
+    Route::get('/estado', [TelaoApiController::class, 'getEstado']);
+    Route::get('/layout/{layout}', [TelaoApiController::class, 'getDadosLayout']);
 });
 
 // Rota para obter estado global (usado pelo telão para sincronização)

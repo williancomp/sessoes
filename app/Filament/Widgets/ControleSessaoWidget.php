@@ -67,7 +67,7 @@ class ControleSessaoWidget extends Widget implements HasForms
             $sessao->save();
 
             Cache::put('sessao_ativa_id', $sessao->id);
-            Cache::put('telao_layout', 'layout-inicial'); // Define layout inicial
+            Cache::put('telao_layout', 'layout-normal'); // Define layout inicial
 
             Notification::make()
                 ->title("Sessão de {$sessao->data->format('d/m/Y')} iniciada!")

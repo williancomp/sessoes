@@ -22,12 +22,26 @@ class TelaoController extends Controller
         $estadoCompleto = $this->estadoGlobal->getEstadoCompleto();
         
         // Extrai dados específicos para compatibilidade
-        $layoutInicial = $estadoCompleto['telao_layout']['layout'] ?? 'layout-inicial';
+        $layoutInicial = $estadoCompleto['telao_layout']['layout'] ?? 'layout-normal';
         $dadosPautaInicial = $estadoCompleto['telao_layout']['dados'] ?? null;
         
-        // Se há votação ativa, usa os dados da votação
-        if ($estadoCompleto['votacao_ativa']) {
-            // ATUALIZADO: Adicionado '?? null' para evitar erros
+        // CORREÇÃO: Palavra ativa tem PRIORIDADE MÁXIMA sobre votação
+        if (isset($estadoCompleto['palavra_ativa']['vereador'])) {
+            $layoutInicial = 'layout-normal';
+            $dadosPautaInicial = [
+                'vereador' => $estadoCompleto['palavra_ativa']['vereador']
+            ];
+            
+            // Se há também uma pauta em discussão no telao_layout, inclui os dados da pauta
+            if (isset($estadoCompleto['telao_layout']['dados']) && 
+                is_array($estadoCompleto['telao_layout']['dados']) && 
+                !isset($estadoCompleto['telao_layout']['dados']['vereador'])) {
+                $dadosPautaInicial = array_merge($dadosPautaInicial, $estadoCompleto['telao_layout']['dados']);
+            }
+        }
+        // Se há votação ativa (mas não há palavra ativa), usa os dados da votação
+        elseif ($estadoCompleto['votacao_ativa']) {
+            $layoutInicial = 'layout-voting';
             $dadosPautaInicial = [
                 'id' => $estadoCompleto['votacao_ativa']['pauta_id'] ?? null,
                 'numero' => $estadoCompleto['votacao_ativa']['pauta_numero'] ?? null,

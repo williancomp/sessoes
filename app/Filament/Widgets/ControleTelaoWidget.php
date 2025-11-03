@@ -82,29 +82,65 @@ class ControleTelaoWidget extends Widget implements HasForms
     {
         $data = null;
         
-        if ($layout === 'layout-pauta' && isset($dadosPayload['pauta_id'])) {
+        if ($layout === 'layout-normal' && isset($dadosPayload['pauta_id'])) {
+            // Layout-normal com dados de pauta (antigo layout-pauta)
             $pauta = Pauta::find($dadosPayload['pauta_id']);
             if($pauta) {
-                $data = $pauta->toArray();
+                $data = [
+                    'id' => $pauta->id,
+                    'numero' => $pauta->numero,
+                    'descricao' => $pauta->descricao,
+                    'autor' => $pauta->autor ?? 'Não informado'
+                ];
+                
+                // CORREÇÃO: Verifica se há vereador falando ativo e preserva no estado
+                $estadoGlobal = app(EstadoGlobalService::class)->getEstadoCompleto();
+                if ($estadoGlobal['palavra_ativa'] && $estadoGlobal['palavra_ativa']['vereador']) {
+                    Log::info('Preservando vereador falando ao exibir pauta', [
+                        'pauta' => $pauta->numero,
+                        'vereador' => $estadoGlobal['palavra_ativa']['vereador']['nome_parlamentar']
+                    ]);
+                    // Não adiciona o vereador aos dados, deixa o frontend verificar o estado global
+                }
+                
                 if($pauta->status === 'aguardando') {
                     $pauta->update(['status' => 'em_discussao']);
                 }
             }
         } elseif ($layout === 'layout-palavra' && isset($dadosPayload['vereador_id'])) {
+            // Layout-palavra é na verdade o layout-normal com overlay do vereador
             $vereador = Vereador::find($dadosPayload['vereador_id']);
             if ($vereador) {
-                // Passa dados relevantes para o telão
-                $data = [
+                // CORREÇÃO: Preserva dados da pauta se já houver uma ativa
+                $estadoAtual = app(EstadoGlobalService::class)->getTelaoLayout();
+                $data = [];
+                
+                // Se já há dados de pauta no layout atual, preserva
+                if (isset($estadoAtual['dados']) && is_array($estadoAtual['dados']) && 
+                    isset($estadoAtual['dados']['id']) && !isset($estadoAtual['dados']['vereador'])) {
+                    $data = $estadoAtual['dados']; // Preserva dados da pauta
+                    Log::info('Preservando dados da pauta ao selecionar vereador', [
+                        'pauta' => $data['numero'] ?? 'N/A',
+                        'vereador' => $vereador->nome_parlamentar
+                    ]);
+                }
+                
+                // Adiciona dados do vereador
+                $data['vereador'] = [
                     'id' => $vereador->id,
                     'nome_parlamentar' => $vereador->nome_parlamentar,
+                    'partido' => $vereador->partido?->sigla ?? 'S/P'
                 ];
+                
+                // Usa layout-normal mas com dados do vereador para mostrar o overlay
+                $layout = 'layout-normal';
             }
-        } elseif ($layout === 'layout-votacao' && $this->pautaEmVotacao) {
+        } elseif ($layout === 'layout-voting' && $this->pautaEmVotacao) {
             $data = $this->pautaEmVotacao->toArray();
         }
 
-        app(EstadoGlobalService::class)->setTelaoLayout($layout);
-        // Cache::put('telao_layout_data_pauta_id', $pautaId); // Esta linha parece desatualizada, $data é mais flexível
+        // CORREÇÃO: Passa os dados para o setTelaoLayout
+        app(EstadoGlobalService::class)->setTelaoLayout($layout, $data);
 
         broadcast(new LayoutTelaoAlterado($layout, $data))->toOthers();
         Log::info("Layout do telão alterado para: {$layout}", ['data' => $data]);
@@ -114,7 +150,7 @@ class ControleTelaoWidget extends Widget implements HasForms
             ->success()
             ->send();
             
-        if ($layout === 'layout-votacao') {
+        if ($layout === 'layout-voting') {
             $this->atualizarEstadoVotacao();
         }
     }
@@ -137,6 +173,10 @@ class ControleTelaoWidget extends Widget implements HasForms
                 ->where('id', '!=', $pauta->id)
                 ->update(['status' => 'votada']);
 
+            // Limpa todos os votos anteriores desta pauta antes de iniciar nova votação
+            \App\Models\Voto::where('pauta_id', $pauta->id)->delete();
+            Log::info("Votos anteriores da Pauta ID {$pauta->id} foram removidos para nova votação");
+
             $pauta->update(['status' => 'em_votacao']);
             $this->pautaEmVotacao = $pauta;
 
@@ -149,7 +189,11 @@ class ControleTelaoWidget extends Widget implements HasForms
             ];
             app(EstadoGlobalService::class)->setVotacaoAtiva($votacaoData);
             
-            $this->mudarLayoutTelao('layout-votacao'); // A pauta é pega de $this->pautaEmVotacao
+            // CORREÇÃO: Limpa a contagem de votos no cache para garantir que inicie zerada
+            app(EstadoGlobalService::class)->setContagemVotos(['sim' => 0, 'nao' => 0, 'abst' => 0, 'total' => 0]);
+            Log::info("Contagem de votos zerada no cache para nova votação da Pauta ID: {$pauta->id}");
+            
+            $this->mudarLayoutTelao('layout-voting'); // A pauta é pega de $this->pautaEmVotacao
 
             broadcast(new VotacaoAberta($pauta))->toOthers();
             Log::info("Votação aberta para Pauta ID: {$pauta->id}");
@@ -237,7 +281,71 @@ class ControleTelaoWidget extends Widget implements HasForms
             $this->pautaEmVotacao = Pauta::find($votacaoAtiva['pauta_id']);
         } else {
             $this->pautaEmVotacao = null;
-        }    
+        }
+    }
+
+    /**
+     * Métodos para detectar estados ativos dos botões
+     */
+    public function isCameraAtiva(): bool
+    {
+        $estado = app(EstadoGlobalService::class)->getEstadoCompleto();
+        $layout = $estado['telao_layout']['layout'] ?? 'layout-normal';
+        $dados = $estado['telao_layout']['dados'] ?? null;
+        
+        return $layout === 'layout-normal' && 
+               !$estado['votacao_ativa'] && 
+               !$estado['palavra_ativa'] && 
+               (!$dados || (!isset($dados['id']) && !isset($dados['vereador'])));
+    }
+
+    public function isPautaAtiva(): bool
+    {
+        $estado = app(EstadoGlobalService::class)->getEstadoCompleto();
+        $layout = $estado['telao_layout']['layout'] ?? 'layout-normal';
+        $dados = $estado['telao_layout']['dados'] ?? null;
+        
+        // CORREÇÃO: Pauta está ativa se há dados de pauta, independente de haver vereador
+        return $layout === 'layout-normal' && 
+               !$estado['votacao_ativa'] && 
+               $dados && 
+               isset($dados['id']);
+    }
+
+    public function isVotacaoAtiva(): bool
+    {
+        $estado = app(EstadoGlobalService::class)->getEstadoCompleto();
+        return (bool) $estado['votacao_ativa'];
+    }
+
+    public function isPalavraAtiva(): bool
+    {
+        $estado = app(EstadoGlobalService::class)->getEstadoCompleto();
+        return (bool) $estado['palavra_ativa'];
+    }
+
+    public function getPautaAtivaNumero(): ?string
+    {
+        $estado = app(EstadoGlobalService::class)->getEstadoCompleto();
+        $dados = $estado['telao_layout']['dados'] ?? null;
+        
+        if ($dados && isset($dados['numero'])) {
+            return $dados['numero'];
+        }
+        
+        return null;
+    }
+
+    public function getVereadorAtivoPalavra(): ?string
+    {
+        $estado = app(EstadoGlobalService::class)->getEstadoCompleto();
+        $palavraAtiva = $estado['palavra_ativa'] ?? null;
+        
+        if ($palavraAtiva && isset($palavraAtiva['vereador']['nome_parlamentar'])) {
+            return $palavraAtiva['vereador']['nome_parlamentar'];
+        }
+        
+        return null;
     }
 
     /**
@@ -283,14 +391,18 @@ class ControleTelaoWidget extends Widget implements HasForms
 
         // Salva o estado no cache
         $estado = [
-            'vereador' => ['id' => $this->vereadorComPalavra->id, 'nome_parlamentar' => $this->vereadorComPalavra->nome_parlamentar],
+            'vereador' => [
+                'id' => $this->vereadorComPalavra->id, 
+                'nome_parlamentar' => $this->vereadorComPalavra->nome_parlamentar,
+                'partido' => ['sigla' => $this->vereadorComPalavra->partido?->sigla ?? 'S/P']
+            ],
             'status' => 'selected',
-            'segundos_restantes' => 0,
+            'segundos_restantes' => 60, // Sempre inicia com 1 minuto
             'timestamp_inicio' => null,
         ];
         app(EstadoGlobalService::class)->setPalavraAtiva($estado);
 
-        // Atualiza o telão para mostrar quem foi selecionado
+        // Atualiza o telão para mostrar quem foi selecionado (usa layout-normal com overlay)
         $this->mudarLayoutTelao('layout-palavra', ['vereador_id' => $vereadorId]);
         
         // Notifica outros clientes (outros operadores, se houver)
@@ -313,7 +425,11 @@ class ControleTelaoWidget extends Widget implements HasForms
         $this->palavraTimestampInicio = now()->timestamp;
 
         $estado = [
-            'vereador' => ['id' => $this->vereadorComPalavra->id, 'nome_parlamentar' => $this->vereadorComPalavra->nome_parlamentar],
+            'vereador' => [
+                'id' => $this->vereadorComPalavra->id, 
+                'nome_parlamentar' => $this->vereadorComPalavra->nome_parlamentar,
+                'partido' => ['sigla' => $this->vereadorComPalavra->partido?->sigla ?? 'S/P']
+            ],
             'status' => 'running',
             'segundos_restantes' => $this->palavraSegundosRestantes,
             'timestamp_inicio' => $this->palavraTimestampInicio,
@@ -342,7 +458,11 @@ class ControleTelaoWidget extends Widget implements HasForms
         $this->palavraTimestampInicio = null;
 
         $estado = [
-            'vereador' => ['id' => $this->vereadorComPalavra->id, 'nome_parlamentar' => $this->vereadorComPalavra->nome_parlamentar],
+            'vereador' => [
+                'id' => $this->vereadorComPalavra->id, 
+                'nome_parlamentar' => $this->vereadorComPalavra->nome_parlamentar,
+                'partido' => ['sigla' => $this->vereadorComPalavra->partido?->sigla ?? 'S/P']
+            ],
             'status' => 'paused',
             'segundos_restantes' => $this->palavraSegundosRestantes,
             'timestamp_inicio' => null,
@@ -368,7 +488,11 @@ class ControleTelaoWidget extends Widget implements HasForms
         $this->palavraTimestampInicio = now()->timestamp; // Novo início
 
         $estado = [
-            'vereador' => ['id' => $this->vereadorComPalavra->id, 'nome_parlamentar' => $this->vereadorComPalavra->nome_parlamentar],
+            'vereador' => [
+                'id' => $this->vereadorComPalavra->id, 
+                'nome_parlamentar' => $this->vereadorComPalavra->nome_parlamentar,
+                'partido' => ['sigla' => $this->vereadorComPalavra->partido?->sigla ?? 'S/P']
+            ],
             'status' => 'running',
             'segundos_restantes' => $this->palavraSegundosRestantes,
             'timestamp_inicio' => $this->palavraTimestampInicio,
@@ -401,8 +525,22 @@ class ControleTelaoWidget extends Widget implements HasForms
 
         $this->limparEstadoPalavra();
         
-        // Manda o telão de volta para a tela inicial
-        $this->mudarLayoutTelao('layout-inicial');
+        // CORREÇÃO: Remove apenas o vereador do layout, preservando a pauta se houver
+        $service = app(EstadoGlobalService::class);
+        $estadoAtual = $service->getTelaoLayout();
+        $dados = $estadoAtual['dados'] ?? [];
+        
+        // Se há dados de pauta, preserva e remove apenas o vereador
+        if (isset($dados['id']) && isset($dados['vereador'])) {
+            unset($dados['vereador']);
+            $service->setTelaoLayout('layout-normal', $dados);
+            
+            broadcast(new LayoutTelaoAlterado('layout-normal', $dados))->toOthers();
+            
+            Log::info('Vereador removido do layout, pauta preservada', [
+                'pauta' => $dados['numero'] ?? 'N/A'
+            ]);
+        }
     }
 
     protected function getListeners(): array

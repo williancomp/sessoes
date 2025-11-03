@@ -62,9 +62,20 @@ class PortalVotacao extends Page
             $this->votacaoAberta = true;
             $this->pautaId = $pauta['id'] ?? null;
             $this->pautaNumero = $pauta['numero'] ?? '—';
+            
+            // CORREÇÃO: Sempre zera o placar quando uma nova votação é aberta
+            // Isso garante que reinicializações sejam refletidas imediatamente
             $this->placarSim = 0;
             $this->placarNao = 0;
             $this->placarAbst = 0;
+            
+            // Limpa o último voto para permitir nova votação
+            $this->ultimoVoto = null;
+            
+            Log::info('Portal Votação: Placar zerado para nova votação', [
+                'pauta_id' => $this->pautaId,
+                'pauta_numero' => $this->pautaNumero
+            ]);
         }
     }
 

@@ -97,6 +97,76 @@
                     console.log('Clique em elemento Livewire detectado:', e.target);
                 }
             });
+
+            // Event listeners para atualização automática da votação
+            if (window.Echo) {
+                window.Echo.channel('sessao-plenaria')
+                    .listen('.VotacaoAberta', (e) => {
+                        console.log('VotacaoAberta recebido no portal do vereador:', e);
+                        // Força refresh do componente Livewire
+                        if (window.Livewire) {
+                            window.Livewire.find(document.querySelector('[wire\\:id]').getAttribute('wire:id')).call('$refresh');
+                        }
+                    })
+                    .listen('.VotacaoEncerrada', (e) => {
+                        console.log('VotacaoEncerrada recebido no portal do vereador:', e);
+                        // Força refresh do componente Livewire
+                        if (window.Livewire) {
+                            window.Livewire.find(document.querySelector('[wire\\:id]').getAttribute('wire:id')).call('$refresh');
+                        }
+                    })
+                    .listen('.ContagemVotosAtualizada', (e) => {
+                        console.log('ContagemVotosAtualizada recebido no portal do vereador:', e);
+                        // Força refresh do componente Livewire para atualizar o placar
+                        if (window.Livewire) {
+                            window.Livewire.find(document.querySelector('[wire\\:id]').getAttribute('wire:id')).call('$refresh');
+                        }
+                    });
+            }
+
+            // Sistema de Heartbeat para detectar inatividade
+            let heartbeatInterval;
+            
+            function enviarHeartbeat() {
+                fetch('/vereador/heartbeat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                    },
+                    credentials: 'same-origin'
+                })
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Heartbeat enviado:', data);
+                })
+                .catch(error => {
+                    console.error('Erro no heartbeat:', error);
+                });
+            }
+
+            // Enviar heartbeat a cada 30 segundos
+            heartbeatInterval = setInterval(enviarHeartbeat, 30000);
+            
+            // Enviar heartbeat imediatamente
+            enviarHeartbeat();
+
+            // Limpar interval quando a página for fechada
+            window.addEventListener('beforeunload', function() {
+                if (heartbeatInterval) {
+                    clearInterval(heartbeatInterval);
+                }
+            });
+
+            // Detectar quando a aba perde o foco (opcional - para debug)
+            document.addEventListener('visibilitychange', function() {
+                if (document.hidden) {
+                    console.log('Aba ficou inativa');
+                } else {
+                    console.log('Aba ficou ativa - enviando heartbeat');
+                    enviarHeartbeat();
+                }
+            });
         });
     </script>
 </x-filament-panels::page>
